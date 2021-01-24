@@ -1,6 +1,5 @@
 # Create Site-to-site VPN - ASA to Azure
 
-Creates a route-based VPN with policy-based traffic selectors (crypto-map not VTI) between a Cisco ASA and Azure.\
 The playbook is designed to be run from an Ansible host behind the ASA as it automatically grabs the local IP address to use in the creation of the VPN. This can be manually overridden by editing the variable *rm_public_ip*.\
 The interesting traffic for the VPN is the Azure Virtual Network with the subnets within that filtered on the ASA Outside ACL.
 
@@ -10,7 +9,7 @@ Azure supports three types of VPN:
 - **IKEv2 route-based VPN using crypto map -** ASA8.2+ or later Azure be configured for route-based VPN with *Policy Based Traffic Selectors*
 - **IKEv1 policy-based VPN using crypto map -** ASA8.2+ with Azure be configured for policy-based VPN
 
-This playbook can deploy either of the crypto-map VPNs, <mark>it can't deploy the VTI VPN</mark>.\
+This playbook can deploy either of the crypto-map VPNs, it can NOT deploy the VTI VPN.\
 *Policy Based Traffic Selectors* (route-based) requires a SKU of standard or higher (*VpnGw1/2/3*) whereas policy-based can be SKU basic. The cost per month is roughly $100 for VpnGw1 compared to £20 for basic.
 
 Azure is missing Ansible modules for creating the *Local Network Gateway* and *VPN Connection* so the playbook uses *AZ CLI* for these tasks.
