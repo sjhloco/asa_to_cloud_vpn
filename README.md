@@ -114,6 +114,8 @@ With Basic SKU (policy-based) you cant define IPsec policy, so cant change any o
 ### Running the playbook ###
 The playbook can be run with any of the following tags:
 
+`ansible-playbook playbook_cloud_vpn.yml -tag xxx`
+
 **--tag deploy:** Assumes that nothing is created. If not already existing it will create the following.\
 AZ: *resource_group, public_ip, virtual_network, subnets, gateway_subnets, VPN_gateway, local_network_gateway, vpn_connection, ipsec_policy*\
 ASA: *ikev2_policy, ikev2_ipsec_proposal, crypto_map, interesting_traffic_ACL, outside_acl, nonat, tunnel_group*
@@ -131,5 +133,5 @@ AZ: *VPN_gateway, vpn_connection, ipsec_policy*\
 ASA: *crypto_map set peer, tunnel_group*
 
 The interesting traffic and pre-shared key can be updated by re-running *deploy*.\
-The crypto algorithmns (*vpn-connection ipsec policy*) cannot be updated, to change these the vpn connection must be deleted (*vpn_down*) and added back (*vpn_up*).\
-Everytime *deploy* or *vpn_up* the ASA tunnel-group will show that it has been changed as the PSK is hashed on the ASA so Ansible will always think it has changed.
+The crypto algorithms (*vpn-connection ipsec policy*) cannot be updated, to change these the vpn connection must be deleted (*vpn_down*) and added back (*vpn_up*).\
+Every time *deploy* or *vpn_up* the ASA tunnel-group will show that it has been changed as the PSK is hashed on the ASA so Ansible will always think it has changed.

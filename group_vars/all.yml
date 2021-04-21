@@ -53,13 +53,13 @@ cld_provider: AZ
 rmte_location: HME
 
 # Remote-side VPN variables - Peer IP address and Interesting traffic
-#rmte_public_ip: 146.198.60.199           # Unhash to statically define. By default if Ansible behind ASA is automatically got
+# rmte_public_ip: 80.189.171.145         # Unhash to statically define. By default if Ansible behind ASA is automatically got
 rmte_subnets:
   - 10.10.10.0/24
   - 10.10.20.0/24
 
 # Cloud-side VPN variables - Peer IP Azure object name, interesting traffic and subnets (for filtering in outside ACL)
-# cld_public_ip: 20.71.131.210         # Unhash if Azure is deleted yet ASA is not, allows you to run ASA parts
+# cld_public_ip: 20.71.250.7        # Unhash if Azure is deleted yet ASA is not, allows you to run ASA parts
 vn_addr_spc:
   - 10.20.0.0/16
 cld_subnets:
