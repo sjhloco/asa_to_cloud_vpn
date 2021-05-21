@@ -22,23 +22,32 @@ ASA: Tested on ASA5505 running 9.2(4) and ASA5506 running 9.8(4)22\
 Ansible: 2.8.4\
 Python: 3.6.9
 
+!!! NEEDS updating to use collections !!!!
+
 ### Prerequisites
-1. Install AZ CLI on the Ansible host\
+
+1. Install [azure_modules](https://galaxy.ansible.com/Azure/azure_modules) and the python packages based using the requirements file.
+```css
+ansible-galaxy install azure.azure_modules
+pip install -r ~/.ansible/roles/azure.azure_modules/files/requirements-azure.txt
+```
+
+2. Install AZ CLI on the Ansible host\
 *Ubuntu: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli-apt?view=azure-cli-latest* \
 *RedHat: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli-yum?view=azure-cli-latest*
 
-2. Create a Service Principal Credential Azure module authentication (2nd command tests it)
+3. Create a Service Principal Credential Azure module authentication (2nd command tests it)
 ```css
 az ad sp create-for-rbac --name Ansible
 az login --service-principal --username APP_ID --password PASSWORD --tenant TENANT_ID
 ```
 
-3. Get the Azure SubscriptionID (the 2nd dictionary key *id*)
+4. Get the Azure SubscriptionID (the 2nd dictionary key *id*)
 ```css
 az account show
 ```
 
-4. In the home directory of the Ansible host create an Azure directory and credentials file with the following details:
+5. In the home directory of the Ansible host create an Azure directory and credentials file with the following details:
 ```css
 mkdir ~/.azure
 vi ~/.azure/credentials
@@ -49,7 +58,7 @@ secret=security-principal-password
 tenant=security-principal-tenant
 ```
 
-5. Remove the conflicting Python cryptography package and install the Ansible Azure packages
+6. Remove the conflicting Python cryptography package and install the Ansible Azure packages
 ```css
 sudo pip uninstall -y cryptography
 pip install ansible[azure] --user
