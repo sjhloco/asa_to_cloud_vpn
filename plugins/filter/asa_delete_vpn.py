@@ -1,10 +1,10 @@
 class FilterModule(object):
     def filters(self):
         return {
-            'delete_vpn': self.delete_vpn
+            'asa_delete_vpn': self.asa_delete_vpn
         }
 
-    def delete_vpn(self, raw_config, cld_provider, vpn_interface, outside_acl, vpn_index, crypto_map, cld_public_ip, asa_vpn, pfs, p2_encr, p2_hash, sa_life, sa_size):
+    def asa_delete_vpn(self, raw_config, cld_provider, vpn_interface, outside_acl, vpn_index, crypto_map, cld_public_ip, asa_vpn, pfs, p2_encr, p2_hash, sa_life, sa_size):
 
         del_config = ""
         for y in raw_config[0].splitlines():

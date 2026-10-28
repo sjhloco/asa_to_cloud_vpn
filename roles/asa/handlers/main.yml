@@ -2,4 +2,4 @@
 - name: SYS >> Print VPN config changes
   listen: vpn_config
   debug:
-      var: vpn_config.updates
+      var: asa_vpn_config.updates

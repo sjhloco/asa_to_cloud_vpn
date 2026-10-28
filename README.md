@@ -71,10 +71,10 @@ The variables that are used in the playbook are split into three sections:
 
 - *ansible_user:* ASA username
 - *ansible_ssh_pass:* ASA password
-- *vpn_index:* Index number used for the phase1 ikev2 policy and the crypto-map
-- *crypto_map:* Name of the crypto-map
-- *vpn_interface:* The interface that the ikev2 policy and crypto-map are associated to and what is used in the NoNAT statement
-- *outside_acl:* Name of the ingress ACL used to limit access from the individual subnets (*no sysopt connection permit-vpn*)
+- *asa_vpn_index:* Index number used for the phase1 ikev2 policy and the crypto-map
+- *asa_crypto_map:* Name of the crypto-map
+- *asa_vpn_interface:* The interface that the ikev2 policy and crypto-map are associated to and what is used in the NoNAT statement
+- *asa_outside_acl:* Name of the ingress ACL used to limit access from the individual subnets (*no sysopt connection permit-vpn*)
 - *asa_vpn.acl:* Name of the VPN interesting traffic ACL
 - *asa_vpn.local_grp:* Name of the object-group that holds the networks local to the ASA
 - *asa_vpn.az_vnet_grp:* Name of the object-group that holds the remote cloud Virtual Networks (supernets)
@@ -82,15 +82,15 @@ The variables that are used in the playbook are split into three sections:
 
 **Azure specific variables**
 
-- *cld_region:*  Azure region in which to build all the VPN objects
-- *rg_name:* Azure resource-group name
-- *public_ip_name:* Name of the Azure public IP address object
-- *vn_name:* The Azure virtual-network name that holds the address spaces allowed over the VPN (interesting traffic)
-- *gw_subnet_name:* Azure gateway subnet name. It is the equivalent of a P-t-P link between VPN gateway and the Virtual Network
-- *gw_subnet_prfx:* Azure gateway subnet network/prefix
-- *cld_gateway:* Azure virtual network gateway name. The GW binds all the Azure VPN elements together (VNET and public IP)
-- *rmte_gateway:* Name of Azure object used to group the remote site peer (public) IP address and subnets (interesting traffic)
-- *vpn_connection:* The Azure VPN connection links the Azure virtual network gateway and remote public IP and subnets
+- *az_region:*  Azure region in which to build all the VPN objects
+- *az_rg_name:* Azure resource-group name
+- *az_public_ip_name:* Name of the Azure public IP address object
+- *az_vn_name:* The Azure virtual-network name that holds the address spaces allowed over the VPN (interesting traffic)
+- *az_gw_subnet_name:* Azure gateway subnet name. It is the equivalent of a P-t-P link between VPN gateway and the Virtual Network
+- *az_gw_subnet_prfx:* Azure gateway subnet network/prefix
+- *az_gateway:* Azure virtual network gateway name. The GW binds all the Azure VPN elements together (VNET and public IP)
+- *az_rmte_gateway:* Name of Azure object used to group the remote site peer (public) IP address and subnets (interesting traffic)
+- *az_vpn_connection:* The Azure VPN connection links the Azure virtual network gateway and remote public IP and subnets
 
 **VPN Variables for both ASA and Azure** (interesting traffic, PSK, encryption and hashing algorithms)
 
@@ -99,9 +99,9 @@ The variables that are used in the playbook are split into three sections:
 - *rmte_location:* VPN remote site name that is used in the Azure object names
 - *rmte_public_ip:* Public IP address of the remote site (ASA). By default this is hashed out and gathered automatically
 - *rmte_subnets:* Subnets of the networks at the remote site (behind the ASA)
-- *cld_public_ip:* Public IP address of the cloud provider (Azure). By default this is hashed out and gathered automatically
-- *vn_addr_spc:* List of address spaces (supernets) within the virtual network (Azure). This is used as the interesting traffic on the ASA
-- *cl_subnets:* Dictionary of the subnets within the Azure Virtual Network. These are filtered through the ASA Outside ACL
+- *cld_public_ip:* Public IP address of the cloud provider (Azure), the VPN peer address on the ASA. By default this is hashed out and gathered automatically, see [Azure public IP hand-off](#azure-public-ip-hand-off)
+- *az_vn_addr_spc:* List of address spaces (supernets) within the virtual network (Azure). This is used as the interesting traffic on the ASA
+- *az_subnets:* Dictionary of the subnets within the Azure Virtual Network. These are filtered through the ASA Outside ACL
 - *p1_encr:* Phase1 encryption algorithm (IKEv1: 3des, aes-256; IKEv2: des, 3des, aes-192, aes-256)
 - *p1_hash* Phase1 hashing (integrity) algorithm (IKEv1: sha1; IKEv2: md5, sha1, sha256, sha384)
 - *dh:* Phase1 Diffie-Hellman (DH) Group (IKEv1: 2; IKEv2: 2, 14, 24)
@@ -144,3 +144,12 @@ ASA: *crypto_map set peer, tunnel_group*
 The interesting traffic and pre-shared key can be updated by re-running *deploy*.\
 The crypto algorithms (*vpn-connection ipsec policy*) cannot be updated, to change these the vpn connection must be deleted (*vpn_down*) and added back (*vpn_up*).\
 Every time *deploy* or *vpn_up* the ASA tunnel-group will show that it has been changed as the PSK is hashed on the ASA so Ansible will always think it has changed.
+
+### Azure public IP hand-off ###
+The ASA needs the Azure public IP as its VPN peer, so it is passed between plays as the fact *cld_public_ip*.
+
+- The localhost play gets the IP from Azure (*az_public_ip_name*) and sets *cld_public_ip* on *localhost*. It aborts if Azure has no public IP.
+- The ASA role reads it as *hostvars.localhost.cld_public_ip* (crypto-map peer and tunnel-group).
+- To set it manually instead, for example when Azure has been deleted but the ASA config still needs removing, define it in *group_vars/all.yml* or pass it on the command line. Extra vars take precedence over the gathered fact.
+
+`ansible-playbook playbook_cloud_vpn.yml --tags destroy -e cld_public_ip=20.71.250.7`

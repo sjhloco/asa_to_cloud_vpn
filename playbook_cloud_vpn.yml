@@ -17,15 +17,17 @@
   # 2. Azure Role for the creation of the Azure end of the VPN must be run before gathering the Azure public IP address
   - name: ROLE >> Azure Configuration
     include_role:
-      name: azure
+      name: az
     tags: [deploy, vpn_up]
 
   # 3. Get and create a fact from the Azure public IP address
+  # Hand-off to the ASA play: cld_public_ip is read there as hostvars.localhost.cld_public_ip.
+  # Can be set manually (-e or group_vars) instead, extra vars take precedence over this fact. See README.
   - block:
     - name: SYS >> Getting {{ cld_provider.upper() }} public IP
       azure_rm_publicipaddress_facts:
-        resource_group: "{{ rg_name }}"
-        name: "{{ public_ip_name }}"
+        resource_group: "{{ az_rg_name }}"
+        name: "{{ az_public_ip_name }}"
       register: publicip
     # Exits script if no public IP in Azure as ASA cant run without this
     - fail:
@@ -40,7 +42,7 @@
   # 4. Azure Role for the deletion of the Azure end of the VPN must be run after gathering the the Azure public IP address
   - name: ROLE >> Azure Configuration
     include_role:
-      name: azure
+      name: az
     tags: [destroy, vpn_down]
 
 # 5. Run all the plays to create the ASA end of the VPN
