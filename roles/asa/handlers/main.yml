@@ -1,5 +1,9 @@
 # Print the output of any commands, even in checkmode when not appleid to ASA
 - name: SYS >> Print VPN config changes
   listen: vpn_config
-  debug:
-      var: asa_vpn_config.updates
+  ansible.builtin.debug:
+    # vpn_down registers its two tasks separately (asa_vpn_dest, asa_vpn_tg) as a handler only runs once so would only show the last
+    msg: >-
+      {{ (asa_vpn_config | default({})).updates | default([])
+      + (asa_vpn_dest | default({})).updates | default([])
+      + (asa_vpn_tg | default({})).updates | default([]) }}
