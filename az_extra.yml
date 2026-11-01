@@ -1,0 +1,93 @@
+---
+##### OPTIONAL playbook, not part of the normal deploy (playbook_cloud_vpn.yml) #####
+# Does the two things that the azure.azcollection modules cant do, so both use the AZ CLI:
+#  --tags policy: Custom IPsec policy on the VPN connection (without it Azure negotiates from its default proposals)
+#  --tags psk:    Updates the PSK on an existing VPN connection (azure_rm_virtualnetworkgatewayconnection doesnt detect PSK changes)
+# Needs Azure creds in ~/.azure/credentials. The ASA IKEv2 policy and IPsec proposal must match what is set in the policy.
+## ansible-playbook az_extra.yml --tags policy
+
+- name: Azure VPN connection - IPsec policy and PSK via AZ CLI
+  hosts: localhost
+
+  tasks:
+    ## 1. Login to AZ CLI as there are no modules for these commands
+    - name: BLK >> AZ CLI login
+      tags: [policy, psk]
+      check_mode: false
+      block:
+        - name: SYS >> Getting Azure credentials
+          ansible.builtin.set_fact:
+            az_creds: "{{ lookup('file', '~/.azure/credentials') }}"
+          no_log: true
+        - name: CLD >> AZ CLI login
+          ansible.builtin.command: "{{ az_creds | az_login }}"
+          changed_when: false
+          no_log: true
+          notify: az_logout
+
+    ## 2. Check the VPN connection exists, nothing to update if it doesnt
+    - name: BLK >> Check VPN connection exists
+      tags: [policy, psk]
+      check_mode: false
+      block:
+        - name: CLD >> Getting list of VPN connections
+          ansible.builtin.command: az network vpn-connection list -g {{ az_rg_name }}
+          register: az_vpn_conns
+          changed_when: false
+        - name: SYS >> Creating fact for whether VPN connection exists
+          ansible.builtin.set_fact:
+            az_vpn_conn_exists: "{{ az_vpn_conns.stdout | check_az_show(az_vpn_connection) }}"
+
+    ## 3. Update the PSK if it is different to the one on the VPN connection
+    - name: BLK >> Update PSK
+      tags: psk
+      when: az_vpn_conn_exists | bool
+      block:
+        - name: CLD >> Getting current PSK
+          ansible.builtin.command: az network vpn-connection show -n {{ az_vpn_connection }} -g {{ az_rg_name }}
+          register: az_psk_value
+          changed_when: false
+          check_mode: false
+          no_log: true
+        - name: SYS >> Creating fact for current PSK
+          ansible.builtin.set_fact:
+            az_psk1: "{{ (az_psk_value.stdout | from_json).sharedKey }}"
+          no_log: true
+        - name: CLD >> Updating the PSK
+          ansible.builtin.command: az network vpn-connection update -n {{ az_vpn_connection }} -g {{ az_rg_name }} --shared-key {{ psk }}
+          when: az_psk1 != psk
+          changed_when: true
+          no_log: true
+
+    ## 4. Create the IPsec policy - Holds all IPsec algorithms, cant be changed once added (remove it first or delete the connection)
+    - name: BLK >> Create IPsec policy
+      tags: policy
+      when: az_vpn_conn_exists | bool
+      block:
+        - name: CLD >> Getting current IPsec policy
+          ansible.builtin.command: az network vpn-connection ipsec-policy list --connection-name {{ az_vpn_connection }} --resource-group {{ az_rg_name }}
+          register: az_ipsec_policy
+          changed_when: false
+          check_mode: false
+        - name: CLD >> Creating VPN connection IPsec policy
+          ansible.builtin.command: >
+            az network vpn-connection ipsec-policy add
+            --connection-name {{ az_vpn_connection }}
+            --resource-group {{ az_rg_name }}
+            --dh-group {{ {14: "DHGroup14", 19: "ECP256", 20: "ECP384"}[dh | int] }}
+            --ike-encryption {{ p1_encr | replace("-", "") | replace("3des", "DES3") | upper }}
+            --ike-integrity {{ p1_hash | upper }}
+            --ipsec-encryption {{ p2_encr | replace("-", "") | replace("3des", "DES3") | upper }}
+            --ipsec-integrity {{ p2_hash | replace("-", "") | upper }}
+            --pfs-group {{ {"group14": "PFS14", "group19": "ECP256", "group20": "ECP384"}[pfs] }}
+            --sa-lifetime {{ sa_life }}
+            --sa-max-size {{ sa_size }}
+          when: az_ipsec_policy.stdout | from_json | length == 0
+          changed_when: true
+
+  handlers:
+    # Logs out of AZ CLI
+    - name: AZ >> AZ CLI logout
+      listen: az_logout
+      ansible.builtin.command: az logout
+      changed_when: false

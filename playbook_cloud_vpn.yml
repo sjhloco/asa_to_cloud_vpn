@@ -3,49 +3,51 @@
   hosts: localhost
 
   tasks:
-  # 1. Get remote end (non-cloud) public IP address
-  - name: SYS >> Getting local Public IP address
-    ipify_facts:
-    check_mode: no
-    tags: [deploy, vpn_up]
-  - name: SYS >> Creating fact for Local public IP
-    set_fact:
-      rmte_public_ip: "{{ ipify_public_ip }}"
-    check_mode: no
-    tags: [deploy, vpn_up]
+    # 1. Get remote end (non-cloud) public IP address
+    - name: BLK >> Get local Public IP address
+      tags: [deploy, vpn_up]
+      check_mode: false
+      block:
+        - name: SYS >> Getting local Public IP address
+          community.general.ipify_facts:
+        - name: SYS >> Creating fact for Local public IP
+          ansible.builtin.set_fact:
+            rmte_public_ip: "{{ ansible_facts.ipify_public_ip }}"
 
-  # 2. Azure Role for the creation of the Azure end of the VPN must be run before gathering the Azure public IP address
-  - name: ROLE >> Azure Configuration
-    include_role:
-      name: az
-    tags: [deploy, vpn_up]
+    # 2. Azure Role for the creation of the Azure end of the VPN must be run before gathering the Azure public IP address
+    - name: ROLE >> Azure Configuration
+      ansible.builtin.include_role:
+        name: az
+      tags: [deploy, vpn_up]
 
-  # 3. Get and create a fact from the Azure public IP address
-  # Hand-off to the ASA play: cld_public_ip is read there as hostvars.localhost.cld_public_ip.
-  # Can be set manually (-e or group_vars) instead, extra vars take precedence over this fact. See README.
-  - block:
-    - name: SYS >> Getting {{ cld_provider.upper() }} public IP
-      azure_rm_publicipaddress_facts:
-        resource_group: "{{ az_rg_name }}"
-        name: "{{ az_public_ip_name }}"
-      register: publicip
-    # Exits script if no public IP in Azure as ASA cant run without this
-    - fail:
-        msg: No Azure public IP present so playbook aborted. Cant run the ASA elements without this
-      when: publicip.ansible_facts.azure_publicipaddresses[0].properties.ipAddress is not defined
-    - name: SYS >> Creating fact for {{ cld_provider.upper() }} public IP
-      set_fact:
-        cld_public_ip: "{{ publicip.ansible_facts.azure_publicipaddresses[0].properties.ipAddress }}"
-    check_mode: no
-    tags: [destroy, vpn_down, deploy, vpn_up]
+    # 3. Get and create a fact from the Azure public IP address - Hand-off to the ASA play (read as hostvars.localhost.cld_public_ip)
+    # Can be set manually (-e or group_vars) instead, extra vars take precedence over this fact and skip the lookup. See README.
+    - name: BLK >> Get Azure public IP address
+      when: cld_public_ip is not defined
+      check_mode: false
+      tags: [destroy, vpn_down, deploy, vpn_up]
+      block:
+        - name: CLD >> Getting Azure public IP
+          azure.azcollection.azure_rm_publicipaddress_info:
+            resource_group: "{{ az_rg_name }}"
+            name: "{{ az_public_ip_name }}"
+          register: az_pip_info
+        # Exits script if no public IP in Azure as ASA cant run without this
+        - name: SYS >> Checking there is an Azure public IP
+          ansible.builtin.fail:
+            msg: No Azure public IP present so playbook aborted. Cant run the ASA elements without this (set it with -e cld_public_ip=x.x.x.x)
+          when: az_pip_info.publicipaddresses | length == 0
+        - name: SYS >> Creating fact for Azure public IP
+          ansible.builtin.set_fact:
+            cld_public_ip: "{{ az_pip_info.publicipaddresses[0].ip_address }}"
 
-  # 4. Azure Role for the deletion of the Azure end of the VPN must be run after gathering the the Azure public IP address
-  - name: ROLE >> Azure Configuration
-    include_role:
-      name: az
-    tags: [destroy, vpn_down]
+    # 4. Azure Role for the deletion of the Azure end of the VPN must be run after gathering the the Azure public IP address
+    - name: ROLE >> Azure Configuration
+      ansible.builtin.include_role:
+        name: az
+      tags: [destroy, vpn_down]
 
-# 5. Run all the plays to create the ASA end of the VPN
+# # 5. Run all the plays to create the ASA end of the VPN
 - name: ROLE >> ASA Configuration
   hosts: asa
   roles:
