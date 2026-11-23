@@ -4,7 +4,9 @@
 
   tasks:
     # 1. Get remote end (non-cloud) public IP address
+    # Can be set manually (-e or group_vars) instead, which skips the lookup. See README.
     - name: BLK >> Get local Public IP address
+      when: rmte_public_ip is not defined
       tags: [deploy, vpn_up]
       check_mode: false
       block:
@@ -42,10 +44,11 @@
             cld_public_ip: "{{ az_pip_info.publicipaddresses[0].ip_address }}"
 
     # 4. Azure Role for the deletion of the Azure end of the VPN must be run after gathering the the Azure public IP address
+    # Deletes are tagged never so they only run when asked for by tag (a run with no tags only deploys)
     - name: ROLE >> Azure Configuration
       ansible.builtin.include_role:
         name: az
-      tags: [destroy, vpn_down]
+      tags: [destroy, vpn_down, never]
 
 # # 5. Run all the plays to create the ASA end of the VPN
 - name: ROLE >> ASA Configuration

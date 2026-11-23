@@ -3,17 +3,20 @@
 ######### Create all the ASA elements of the VPN #########
 
 ## Creates and applies VPN config from a template. Is also vpn_up as it adds back the (new) Azure IP removed by vpn_down
+## passwords reads the config with the PSK in clear (more system:running-config), else the hashed PSK in show run always differs so is always pushed
 - name: NET >> Configure Remote VPN
   cisco.asa.asa_config:
     src: vpn_config.j2
+    passwords: true
   notify: vpn_config
   register: asa_vpn_config
   tags: [deploy, vpn_up]
 ######### Delete all the ASA elements of the VPN #########
+# Tagged never so they only run when asked for by tag (a run with no tags only deploys)
 # Checks what parts of VPN config exists and deletes them
 - name: BLK >> Check existing VPN config on the ASA
   check_mode: false # Ensures still runs in checkmode.
-  tags: [destroy, vpn_down]
+  tags: [destroy, vpn_down, never]
   block:
     - name: NET >> Checking existing VPN config on the ASA
       # A wide terminal stops the ASA scrolling the long show command, which leaves the echo in stdout. terminal width is a config mode command so is
@@ -34,7 +37,7 @@
   when: asa_raw_config.stdout[2] | trim != "" # Only run if asa_raw_config is not empty (ASA can return a blank line)
   notify: vpn_config
   register: asa_vpn_config
-  tags: destroy
+  tags: [destroy, never]
 
 ########## Remove the Azure IP from the ASA to break the VPN (vpn_down deletes the Azure IP so vpn_up gets a new one) ##########
 - name: NET >> Bring down the VPN (remove tunnel destination)
@@ -44,11 +47,11 @@
   when: asa_raw_config.stdout[2] is search('^ tunnel destination ' ~ hostvars.localhost.cld_public_ip, multiline=True)
   notify: vpn_config
   register: asa_vpn_dest
-  tags: vpn_down
+  tags: [vpn_down, never]
 - name: NET >> Bring down the VPN (remove tunnel-group)
   cisco.asa.asa_config:
     lines: clear configure tunnel-group {{ hostvars.localhost.cld_public_ip }}
   when: asa_raw_config.stdout[2] is search('^tunnel-group ' ~ hostvars.localhost.cld_public_ip ~ ' ', multiline=True)
   notify: vpn_config
   register: asa_vpn_tg
-  tags: vpn_down
+  tags: [vpn_down, never]

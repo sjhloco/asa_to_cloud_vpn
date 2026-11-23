@@ -2,6 +2,9 @@
 {% set raw = asa_raw_config.stdout[2] %}
 {% set esp = cld_provider ~ '_ESP_' ~ (p2_encr | upper | replace('-', '')) %}
 {% set peer = hostvars.localhost.cld_public_ip %}
+{% if raw is search('^access-group ' ~ asa_tunnel_acl ~ ' in interface ' ~ asa_tunnel_intf ~ ' *$', multiline=True) %}
+no access-group {{ asa_tunnel_acl }} in interface {{ asa_tunnel_intf }}
+{% endif %}
 {% if raw is search('^interface Tunnel1 *$', multiline=True) %}
 clear configure interface Tunnel1
 {% endif %}
@@ -13,10 +16,10 @@ clear configure crypto ikev2 policy {{ asa_vpn_index }}
 {% if raw is search('^tunnel-group ' ~ peer ~ ' ', multiline=True) %}
 clear configure tunnel-group {{ peer }}
 {% endif %}
-{% if raw is search('^access-list ' ~ asa_outside_acl ~ ' .*object-group ' ~ asa_vpn.az_subnet_grp, multiline=True) %}
-no access-list {{ asa_outside_acl }} extended permit ip object-group {{ asa_vpn.az_subnet_grp }} object-group {{ asa_vpn.local_grp }}
+{% if raw is search('^access-list ' ~ asa_tunnel_acl ~ ' .*object-group ' ~ asa_vpn.az_subnet_grp, multiline=True) %}
+no access-list {{ asa_tunnel_acl }} extended permit ip object-group {{ asa_vpn.az_subnet_grp }} object-group {{ asa_vpn.local_grp }}
 {% endif %}
-{% for grp in [asa_vpn.local_grp, asa_vpn.az_vnet_grp, asa_vpn.az_subnet_grp] %}
+{% for grp in [asa_vpn.local_grp, asa_vpn.az_subnet_grp] %}
 {% if raw is search('^object-group network ' ~ grp ~ ' *$', multiline=True) %}
 no object-group network {{ grp }}
 {% endif %}

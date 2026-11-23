@@ -1,155 +1,168 @@
 # Create Site-to-site VPN - ASA to Azure
 
-The playbook is designed to be run from an Ansible host behind the ASA as it automatically grabs the local IP address to use in the creation of the VPN. This can be manually overridden by editing the variable *rm_public_ip*.\
-The interesting traffic for the VPN is the Azure Virtual Network with the subnets within that filtered on the ASA Outside ACL.
+Builds a route-based IKEv2 site-to-site VPN between a Cisco ASA and an Azure VPN gateway.
 
-Azure supports three types of VPN:
+- **Azure:** resource group, virtual network, subnets, GatewaySubnet, public IP, VPN gateway (route-based, *VpnGw1AZ*), local network gateway and VPN connection
+- **ASA:** object-groups, IKEv2 policy, IPsec proposal and profile, VTI (*Tunnel1*) and its ACL, static routes (to the Azure address spaces) and tunnel-group
 
-- **IKEv2 route-based VPN using VTI -** ASA9.8(1)+ with Azure configured for route-based VPN
-- **IKEv2 route-based VPN using crypto map -** ASA8.2+ or later Azure be configured for route-based VPN with *Policy Based Traffic Selectors*
-- **IKEv1 policy-based VPN using crypto map -** ASA8.2+ with Azure be configured for policy-based VPN
+When run in full from behind the ASA, the playbook looks up the ASA and Azure public IPs. Either can be overridden in *group_vars/all.yml* or with `-e`.
 
-This playbook can deploy either of the crypto-map VPNs, it can NOT deploy the VTI VPN.\
-*Policy Based Traffic Selectors* (route-based) requires a SKU of standard or higher (*VpnGw1/2/3*) whereas policy-based can be SKU basic. The cost per month is roughly $100 for VpnGw1 compared to £20 for basic.
-
-Azure is missing Ansible modules for creating the *Local Network Gateway* and *VPN Connection* so the playbook uses *AZ CLI* for these tasks.
-*azure_rm_virtualnetworkgateway* doesn't support *SKU Basic* (think can in collections) so for policy-based VPNs have to again use *AZ CLI*.
-
-The ASA credentials are defined under the **all.yml** group_var and the Azure credentials in the **~/.azure/credentials** file (as described in prerequisites)
+| Variable | What it is | Looked up from | Set it yourself when |
+| --- | --- | --- | --- |
+| `rmte_public_ip` | ASA public IP | `ipify`, so run from a host behind the ASA | The Ansible host isn't behind the ASA |
+| `cld_public_ip` | Azure public IP | Azure (`az_public_ip_name`) | Running only the ASA part, or Azure has already been deleted |
 
 ### Versions
-ASA: Tested on ASA5505 running 9.2(4) and ASA5506 running 9.8(4)22\
-Ansible: 2.8.4\
-Python: 3.6.9
 
-!!! NEEDS updating to use collections !!!!
+- ASA: tested on ASAv 9.22(2)14
+- ansible-core: 2.21.5
+- Python: 3.14
+- Collections: azure.azcollection 4.2.0, cisco.asa 7.0.0
 
 ### Prerequisites
 
-1. Install [azure_modules](https://galaxy.ansible.com/Azure/azure_modules) and the python packages based using the requirements file.
-```css
-ansible-galaxy install azure.azure_modules
-pip install -r ~/.ansible/roles/azure.azure_modules/files/requirements-azure.txt
-```
+1. Install the Python packages (ansible-core, ansible-lint and the Azure SDK) from *pyproject.toml*\
+   `uv sync`
 
-2. Install AZ CLI on the Ansible host\
-*Ubuntu: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli-apt?view=azure-cli-latest* \
-*RedHat: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli-yum?view=azure-cli-latest*
+2. Install the collections into the project (*./collections*, git ignored)\
+   `uv run ansible-galaxy collection install -r collections/requirements.yml`
 
-3. Create a Service Principal Credential Azure module authentication (2nd command tests it)
-```css
-az ad sp create-for-rbac --name Ansible
-az login --service-principal --username APP_ID --password PASSWORD --tenant TENANT_ID
-```
+3. Install the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (macOS: `brew install azure-cli`)
 
-4. Get the Azure SubscriptionID (the 2nd dictionary key *id*)
-```css
-az account show
-```
+4. Log in to Azure and check the subscription (*azure.azcollection* modules fall back to the CLI session and the *az* CLI tasks use it directly)\
+   `az login`\
+   `az account show`
 
-5. In the home directory of the Ansible host create an Azure directory and credentials file with the following details:
-```css
-mkdir ~/.azure
-vi ~/.azure/credentials
-[default]
-subscription_id=your-subscription_id
-client_id=security-principal-appid
-secret=security-principal-password
-tenant=security-principal-tenant
-```
+5. On the ASA, enable SSH with an ECDSA host key. paramiko 5.x no longer accepts the ASA's default *ssh-rsa*\
+   `ssh key-exchange hostkey ecdsa`
 
-6. Remove the conflicting Python cryptography package and install the Ansible Azure packages
-```css
-sudo pip uninstall -y cryptography
-pip install ansible[azure] --user
-```
+The ASA credentials are in *group_vars/all.yml*, Azure uses your local *az login* session (CI or unattended runs need service principal environment variables).
 
 ### Variables
-The variables that are used in the playbook are split into three sections:
 
-**ASA specific variables**
+All the variables are in *group_vars/all.yml*, split into ASA, Azure and both.
+
+#### ASA variables
 
 - *ansible_user:* ASA username
-- *ansible_ssh_pass:* ASA password
-- *asa_vpn_index:* Index number used for the phase1 ikev2 policy and the crypto-map
-- *asa_crypto_map:* Name of the crypto-map
-- *asa_vpn_interface:* The interface that the ikev2 policy and crypto-map are associated to and what is used in the NoNAT statement
-- *asa_outside_acl:* Name of the ingress ACL used to limit access from the individual subnets (*no sysopt connection permit-vpn*)
-- *asa_vpn.acl:* Name of the VPN interesting traffic ACL
-- *asa_vpn.local_grp:* Name of the object-group that holds the networks local to the ASA
-- *asa_vpn.az_vnet_grp:* Name of the object-group that holds the remote cloud Virtual Networks (supernets)
-- *asa_vpn.az_subnet_grp:* Name of the object-group that holds the remote cloud Virtual Network subnets
+- *ansible_password:* ASA password
+- *asa_vpn_index:* Priority of the IKEv2 policy
+- *asa_vpn_interface:* Outside interface (nameif). IKEv2 is enabled on it and it is the tunnel source
+- *asa_tunnel_intf:* Nameif of *Tunnel1*. The static routes to Azure point out of it
+- *asa_tunnel_ip:* /30 for the tunnel. The ASA uses the first address, the second is the next hop of the static routes
+- *asa_tunnel_acl:* Name of the ACL on the tunnel nameif that allows the Azure subnets in (only matters with `no sysopt connection permit-vpn`)
+- *asa_vpn.local_grp:* Object-group of the networks behind the ASA (*rmte_subnets*), used in the tunnel ACL
+- *asa_vpn.az_subnet_grp:* Object-group of the Azure subnets (*az_subnets*), used in the tunnel ACL
 
-**Azure specific variables**
+#### Azure variables
 
-- *az_region:*  Azure region in which to build all the VPN objects
-- *az_rg_name:* Azure resource-group name
-- *az_public_ip_name:* Name of the Azure public IP address object
-- *az_vn_name:* The Azure virtual-network name that holds the address spaces allowed over the VPN (interesting traffic)
-- *az_gw_subnet_name:* Azure gateway subnet name. It is the equivalent of a P-t-P link between VPN gateway and the Virtual Network
-- *az_gw_subnet_prfx:* Azure gateway subnet network/prefix
-- *az_gateway:* Azure virtual network gateway name. The GW binds all the Azure VPN elements together (VNET and public IP)
-- *az_rmte_gateway:* Name of Azure object used to group the remote site peer (public) IP address and subnets (interesting traffic)
-- *az_vpn_connection:* The Azure VPN connection links the Azure virtual network gateway and remote public IP and subnets
+- *az_region:* Azure region for all the VPN objects
+- *az_rg_name:* Resource group name
+- *az_public_ip_name:* Name of the VPN gateway's public IP
+- *az_vn_name:* Virtual network name
+- *az_gw_subnet_prfx:* Gateway subnet prefix. Must be inside *az_vn_addr_spc* and not overlap *az_subnets*. Azure recommends /27
+- *az_gateway:* VPN gateway name. It joins the public IP and the gateway subnet
+- *az_rmte_gateway:* Local network gateway name. It holds the ASA's public IP and the networks behind it
+- *az_vpn_connection:* VPN connection name. It links the VPN gateway to the local network gateway and holds the PSK and IPsec policy
 
-**VPN Variables for both ASA and Azure** (interesting traffic, PSK, encryption and hashing algorithms)
+#### Variables for both ends
 
-- *tunnel_type:* policy-based uses IKEv1 (SKU Basic) whereas route_based uses IKEv2 (SKU VpnGw1)
-- *cld_provider:* Cloud provider name that is used in the ASA object names
-- *rmte_location:* VPN remote site name that is used in the Azure object names
-- *rmte_public_ip:* Public IP address of the remote site (ASA). By default this is hashed out and gathered automatically
-- *rmte_subnets:* Subnets of the networks at the remote site (behind the ASA)
-- *cld_public_ip:* Public IP address of the cloud provider (Azure), the VPN peer address on the ASA. By default this is hashed out and gathered automatically, see [Azure public IP hand-off](#azure-public-ip-hand-off)
-- *az_vn_addr_spc:* List of address spaces (supernets) within the virtual network (Azure). This is used as the interesting traffic on the ASA
-- *az_subnets:* Dictionary of the subnets within the Azure Virtual Network. These are filtered through the ASA Outside ACL
-- *p1_encr:* Phase1 encryption algorithm (IKEv1: 3des, aes-256; IKEv2: des, 3des, aes-192, aes-256)
-- *p1_hash* Phase1 hashing (integrity) algorithm (IKEv1: sha1; IKEv2: md5, sha1, sha256, sha384)
-- *dh:* Phase1 Diffie-Hellman (DH) Group (IKEv1: 2; IKEv2: 2, 14, 24)
-- *p1_life:* Phase1 SA lifetime (only applied on ASA)
-- *p2_encr:* Phase2 encryption algorithm (IKEv1: 3des, aes-256; IKEv2: des, 3des, aes-192, aes-256)
-- *p2_hash:* Phase2 hashing (integrity) algorithm (IKEv1: sha1; IKEv2: md5, sha-1, sha-256 )
-- *pfs:* Phase2 Perfect Forward Secrecy (PFS) group (IKEv2: group2, group24)
-- *sa_life:* Phase2 SA lifetime in seconds
-- *sa_size:* Phase2 SA lifetime in KiloBytes
-- *psk:* Pre-shared Key
+- *cld_provider:* Short name of the cloud end (*AZ*), used in the ASA and Azure object names
+- *rmte_location:* Short name of the ASA site (*HME*), used in the Azure object names
+- *rmte_subnets:* Networks behind the ASA. Used in the ASA object-group and the Azure local network gateway
+- *az_vn_addr_spc:* Address spaces (supernets) of the Azure virtual network. The ASA has a static route for each one over *Tunnel1*
+- *az_subnets:* Subnets in the virtual network (*name: prefix*). The tunnel ACL allows these in
+- *psk:* Pre-shared key, set on both ends
+- *rmte_public_ip:* ASA public IP. Commented out so it is dynamically looked up (see [Setting the public IPs yourself](#setting-the-public-ips-yourself))
+- *cld_public_ip:* Azure public IP. Commented out so it is dynamically looked up (see [Setting the public IPs yourself](#setting-the-public-ips-yourself))
 
-With Basic SKU (policy-based) you cant define IPsec policy, so cant change any of the default IKEv1 parameters. There are standard encryption-hashing pairs pre-configured in Azure for PH1 and PH2. PFS is not supported.
+#### Crypto variables
 
-- AES256-SHA256
-- AES256-SHA1
-- AES128-SHA1
-- 3DES-SHA1
+The same values build the ASA config and the Azure IPsec policy, so both ends always match.
 
-### Running the playbook ###
-The playbook can be run with any of the following tags:
+| Variable | What it is | Options |
+| --- | --- | --- |
+| *p1_encr* | Phase 1 encryption | aes-192, aes-256 |
+| *p1_hash* | Phase 1 integrity, also used as the PRF | sha256, sha384 |
+| *dh* | Phase 1 Diffie-Hellman group | 14, 19, 20 |
+| *p1_life* | Phase 1 lifetime in seconds | 28800. Only set on the ASA, Azure fixes it at 28800 |
+| *p2_encr* | Phase 2 encryption | aes-192, aes-256 |
+| *p2_hash* | Phase 2 integrity | sha-256 |
+| *pfs* | Phase 2 Perfect Forward Secrecy group | group14, group19, group20 |
+| *sa_life* | Phase 2 lifetime in seconds | 27000 (Azure default) |
+| *sa_size* | Phase 2 lifetime in kilobytes | 102400000 (Azure default) |
 
-`ansible-playbook playbook_cloud_vpn.yml -tag xxx`
+The values use ASA syntax, which is why *p1_hash* is `sha256` and *p2_hash* is `sha-256`. The role converts them to the Azure names.
 
-**--tag deploy:** Assumes that nothing is created. If not already existing it will create the following.\
-AZ: *resource_group, public_ip, virtual_network, subnets, gateway_subnets, VPN_gateway, local_network_gateway, vpn_connection, ipsec_policy*\
-ASA: *ikev2_policy, ikev2_ipsec_proposal, crypto_map, interesting_traffic_ACL, outside_acl, nonat, tunnel_group*
+### Running the playbook
 
-**--tag destroy:** Only removes the configuration specific to to this VPN tunnel, so wont remove any of the AZ vnet/subnets or the ASA ikev2_policy/ipsec_proposal.\
-AZ: *public_ip, local_network_gateway, VPN_gateway, vpn_connection, ipsec_policy)*\
-ASA: *crypto_map, ACLs, object_groups, nonat, tunnel_group*
+Run the playbook with one of these tags. A run with no tags (or `--tags all`) only deploys.
 
-**--tag vpn_down:**	Deletes the components to break the VPN (more importantly the elements that Azure bills you for).\
-AZ: *VPN_gateway, vpn_connection, ipsec_policy*\
-ASA: *crypto_map set peer, tunnel-group*
+`uv run ansible-playbook playbook_cloud_vpn.yml --tags xxx`
 
-**--tag vpn_up:** Brings backup the tunnel by adding back the components deleted by vpn_down and updating the local gateway incase the remote peer address has changed.\
-AZ: *VPN_gateway, vpn_connection, ipsec_policy*\
-ASA: *crypto_map set peer, tunnel_group*
+- **`deploy`** Creates or updates everything. Safe to re-run, as everything already in place is left as it is.
+  - AZ: *resource group, virtual network, subnets, GatewaySubnet, public IP, VPN gateway, local network gateway, VPN connection, IPsec policy, PSK*
+  - ASA: *object-groups, crypto ikev2 enable, IKEv2 policy, IPsec proposal, IPsec profile, Tunnel1, static routes, tunnel ACL and its access-group, tunnel-group, sysopt connection tcpmss*
 
-The interesting traffic and pre-shared key can be updated by re-running *deploy*.\
-The crypto algorithms (*vpn-connection ipsec policy*) cannot be updated, to change these the vpn connection must be deleted (*vpn_down*) and added back (*vpn_up*).\
-Every time *deploy* or *vpn_up* the ASA tunnel-group will show that it has been changed as the PSK is hashed on the ASA so Ansible will always think it has changed.
+- **`destroy`** Removes everything for this VPN, except the shared parts listed under *Keeps*.
+  - AZ: *VPN connection (and its IPsec policy), VPN gateway, public IP, local network gateway*
+  - ASA: *Tunnel1 (its static routes go with it), IPsec profile, IPsec proposal, IKEv2 policy, tunnel-group, tunnel ACL and its access-group, object-groups*
+  - Keeps: AZ *resource group, virtual network, subnets*. ASA *crypto ikev2 enable, sysopt connection tcpmss*
 
-### Azure public IP hand-off ###
-The ASA needs the Azure public IP as its VPN peer, so it is passed between plays as the fact *cld_public_ip*.
+- **`vpn_down`** Deletes what breaks the VPN, which is also what Azure bills for. This includes the public IP, so the next *vpn_up* gets a new Azure IP.
+  - AZ: *VPN connection, VPN gateway, public IP*
+  - ASA: *tunnel destination, tunnel-group*
 
-- The localhost play gets the IP from Azure (*az_public_ip_name*) and sets *cld_public_ip* on *localhost*. It aborts if Azure has no public IP.
-- The ASA role reads it as *hostvars.localhost.cld_public_ip* (crypto-map peer and tunnel-group).
-- To set it manually instead, for example when Azure has been deleted but the ASA config still needs removing, define it in *group_vars/all.yml* or pass it on the command line. Extra vars take precedence over the gathered fact.
+- **`vpn_up`** Brings the tunnel back up after *vpn_down*. It also updates the local network gateway in case the ASA's public IP has changed.
+  - AZ: *public IP (new address), VPN gateway, local network gateway, VPN connection, IPsec policy, PSK*
+  - ASA: *re-applies the whole config, which adds the tunnel destination and tunnel-group with the new Azure IP*
 
-`ansible-playbook playbook_cloud_vpn.yml --tags destroy -e cld_public_ip=20.71.250.7`
+**Changing settings by re-running `deploy`**
+- **PSK:** updated on both ends.
+- **Crypto variables:** the Azure IPsec policy is replaced first, so the tunnel drops until the ASA play updates the ASA to match.
+- **Adding subnets or address spaces:** works on both ends.
+
+#### Known limitations
+
+- **Removing subnets or address spaces doesn't remove them.** The ASA template only adds lines, so a removed *network-object* or static route stays on the ASA. The virtual network task doesn't purge, so a removed address space stays in Azure. Remove them by hand.
+- **Changing *p2_encr* leaves the old IPsec proposal and profile on the ASA.** Their names include it (*AZ_ESP_AES256*), so new ones are made. A later *destroy* only looks for the current name, so remove the old ones by hand.
+- **`--check` on a brand-new deploy fails at the IPsec policy step**, as the VPN connection doesn't exist yet. Check mode works once the VPN has been deployed.
+
+#### Setting the public IPs yourself
+
+The dynamic public IP lookup can be overridden by manually setting `rmte_public_ip` or `cld_public_ip` in *group_vars/all.yml* or with `-e`. Use it when:
+
+- The Ansible host isn't behind the ASA (`rmte_public_ip`)
+- Running only the ASA part (`cld_public_ip`)
+- Azure is gone but the ASA still needs cleaning up (`cld_public_ip`). Use the old Azure IP so `destroy` finds the tunnel-group
+
+If the ASA public IP changes, nothing needs setting. Re-run `deploy` or `vpn_up` and the local network gateway is updated with the new IP.
+
+```bash
+# Get the current Azure IP (to use as cld_public_ip)
+az network public-ip show -g <az_rg_name> -n <az_public_ip_name> --query ipAddress -o tsv
+# Ansible host isn't behind the ASA (ASA public IP)
+uv run ansible-playbook playbook_cloud_vpn.yml --tags deploy -e rmte_public_ip=x.x.x.x
+# Only the ASA part (current Azure IP)
+uv run ansible-playbook playbook_cloud_vpn.yml --tags deploy --limit asa -e cld_public_ip=x.x.x.x
+# Azure is gone, clean up the ASA (old Azure IP)
+uv run ansible-playbook playbook_cloud_vpn.yml --tags destroy --limit asa -e cld_public_ip=x.x.x.x
+```
+
+### Upgrading the Azure collection
+
+*azure.azcollection* pins every Azure SDK package to an exact version in its own *requirements.txt*. The modules only work with that set, so the collection and the SDK must be upgraded together.
+
+Check the SDK matches the collection: *Would make no changes* means they match. Anything else lists the packages that are out of sync.\
+`uv pip install --dry-run -r collections/ansible_collections/azure/azcollection/requirements.txt`
+
+**Upgrade**
+1. Change the *azure.azcollection* version in *collections/requirements.yml*, for example `"==4.3.0"`
+2. Install it with `uv run ansible-galaxy collection install -r collections/requirements.yml --upgrade`
+3. Sync the SDK packages to the new collection's list with `uv add -r collections/ansible_collections/azure/azcollection/requirements.txt`
+4. Run the check above. It must say *Would make no changes*
+5. Run `uv run ansible-lint` and `uv run ansible-playbook playbook_cloud_vpn.yml --syntax-check`
+6. Run `--check --diff` against a test subscription, then update the version under [Versions](#versions)
+7. Commit *collections/requirements.yml*, *pyproject.toml* and *uv.lock* together
+
+If `uv add` fails on a pre-release dependency, add that package with an exact pin, for example `uv add "msal==1.33.0b1"` (needed for 4.1.0). Remove the pin again once a later collection no longer needs it.

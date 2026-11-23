@@ -14,25 +14,23 @@ ansible_password: pa$$w0rd
 # ASA specific VPN configuration details
 asa_vpn_index: 100
 asa_vpn_interface: HME_INET_VL99
-asa_outside_acl: OUTSIDE
-asa_tunnel_intf: HME_AZ_TUN
+asa_tunnel_acl: "{{ cld_provider }}_TUN_IN"
+asa_tunnel_intf: "HME_{{ cld_provider }}_TUN"
 asa_tunnel_ip: 10.10.253.1/30
 
 # Naming for the VPN ACL and objects groups
 asa_vpn:
   local_grp: "{{ cld_provider }}_LOCAL"
-  az_vnet_grp: "{{ cld_provider }}_REMOTE_VNET"
   az_subnet_grp: "{{ cld_provider }}_REMOTE_SUBNET"
 
 ################################## Azure only Variables ##################################
 # Azure base Parameters
-az_region: westeurope
+az_region: swedencentral
 az_rg_name: stesworld
 
 # Azure VPN gateway subnet and object naming
 az_public_ip_name: pip-vpn-{{ rmte_location.lower() }}-{{ cld_provider.lower() }}1 # pip-vpn-hme-az1
 az_vn_name: vnet-blu-{{ cld_provider.lower() }}1 # vnet-blu-az1
-az_gw_subnet_name: GatewaySubnet
 az_gw_subnet_prfx: 10.40.255.0/27
 
 # Azure object naming for elements that glue VPN connection together (local and remote details joined in a connection profile)
@@ -51,7 +49,7 @@ rmte_subnets:
   - 10.10.10.0/24
   - 10.10.20.0/24
 
-# Cloud-side VPN variables - Peer IP Azure object name, interesting traffic and subnets (for filtering in outside ACL)
+# Cloud-side VPN variables - Peer IP Azure object name, interesting traffic and subnets (for filtering in the tunnel ACL)
 # cld_public_ip: 20.71.250.7 # Unhash if Azure is deleted yet ASA is not, allows you to run ASA parts
 az_vn_addr_spc:
   - 10.40.0.0/16
@@ -59,14 +57,14 @@ az_subnets:
   snet-blu-mgmt: 10.40.10.0/24
   snet-blu-data: 10.40.20.0/24
 
-# Route-based SKU VpnGw1 can use IPsec policy, example of IKEV2 (route-based) parameters
+# Route-based SKU VpnGw1AZ can use IPsec policy, example of IKEV2 (route-based) parameters
 p1_encr: aes-256 # aes-192, aes-256
 p1_hash: sha384 # sha256, sha384
 dh: 20 # 14, 19, 20
 p1_life: 28800 # Is fixed to this in Azure
 
-p2_encr: aes-256 # aes-192, aes-256, (AEAD) aes-gcm-256
-p2_hash: sha-256 # sha-256, (none with aes-gcm)
+p2_encr: aes-256 # aes-192, aes-256 (aes-gcm not supported, see README)
+p2_hash: sha-256 # sha-256 (Azure has no SHA384 for phase 2)
 pfs: group20 # group14, group19, group20
 sa_life: 27000 # Azure defaults
 sa_size: 102400000 # Azure defaults

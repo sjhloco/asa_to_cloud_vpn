@@ -15,9 +15,8 @@
       azure.azcollection.azure_rm_virtualnetwork:
         name: "{{ az_vn_name }}"
         resource_group: "{{ az_rg_name }}"
-        address_prefixes_cidr: "{{ item }}"
+        address_prefixes_cidr: "{{ az_vn_addr_spc }}"
         state: present
-      loop: "{{ az_vn_addr_spc }}"
     # Create subnets within the virtual network
     - name: CLD  >> Create/Update subnets
       azure.azcollection.azure_rm_subnet:
@@ -27,16 +26,14 @@
         address_prefix_cidr: "{{ item.value }}"
         state: present
       loop: "{{ az_subnets | dict2items }}"
-    # Create gateway subnet (internal Azure link between VPN gateway and Virtual Network)
+    # Create gateway subnet (internal Azure link between VPN gateway and Virtual Network). Azure requires the name GatewaySubnet
     - name: CLD  >> Create/Update gateway subnet
       azure.azcollection.azure_rm_subnet:
-        name: "{{ az_gw_subnet_name }}"
+        name: GatewaySubnet
         virtual_network_name: "{{ az_vn_name }}"
         resource_group: "{{ az_rg_name }}"
         address_prefix_cidr: "{{ az_gw_subnet_prfx }}"
         state: present
-
-# Gateway: route-based, AZ SKU (`VpnGw1AZ`+). Non-AZ VpnGw1-5 are retired; Basic SKU / policy-based path removed
 
 ## 3. Create the public IP - also in vpn_up as vpn_down deletes it (the ASA is given the new IP)
 - name: BLK >> Deploy, vpn_up - pip, gw, local-network gw, vpn conn
@@ -58,7 +55,7 @@
         ip_configurations:
           - name: ipconfig
             public_ip_address_name: "{{ az_public_ip_name }}"
-            subnet: "{{ az_gw_subnet_name }}"
+            subnet: GatewaySubnet
         virtual_network: "{{ az_vn_name }}"
         state: present
 
@@ -83,7 +80,15 @@
         resource_group: "{{ az_rg_name }}"
         name: "{{ az_rmte_gateway }}"
       register: az_lgw_info
-    - name: CLD >> Create/Update VPN connection (link AZ and remote peer)
+    # The module fails (ansible-core 2.19+) once the connection has an IPsec policy, as it returns the raw SDK object.
+    # On an existing connection it changes nothing we set (and an update would wipe the policy), so only run it to create.
+    - name: CLD >> Checking if VPN connection exists
+      ansible.builtin.command: az network vpn-connection list -g {{ az_rg_name }} --query "[?name=='{{ az_vpn_connection }}'].name" -o tsv
+      register: az_conn_cur
+      changed_when: false
+      check_mode: false
+    - name: CLD >> Create VPN connection (link AZ and remote peer)
+      when: az_conn_cur.stdout == ""
       azure.azcollection.azure_rm_virtualnetworkgatewayconnection:
         resource_group: "{{ az_rg_name }}"
         name: "{{ az_vpn_connection }}"
@@ -95,18 +100,70 @@
         use_policy_based_traffic_selectors: false
         state: present
 
-### ! The module doesn't set the IPsec policy or detect PSK changes, both are done with the AZ CLI in az_extra.yml (optional, see README)
+    ## 7. IPsec policy and PSK - the connection module cant set the policy or detect PSK changes, so uses the AZ CLI (needs az login, see README)
+    ## Without the policy Azure only offers its defaults (DH2, no SHA384), so the tunnel fails with NO_PROPOSAL_CHOSEN
+    - name: BLK >> IPsec policy and PSK (AZ CLI)
+      vars:
+        # Built from the same vars as the ASA IKEv2 policy and IPsec profile, keys match the az CLI ipsec-policy list output
+        az_ipsec_policy:
+          dhGroup: "{{ {14: 'DHGroup14', 19: 'ECP256', 20: 'ECP384'}[dh | int] }}"
+          ikeEncryption: "{{ p1_encr | replace('-', '') | upper }}"
+          ikeIntegrity: "{{ p1_hash | upper }}"
+          ipsecEncryption: "{{ p2_encr | replace('-', '') | upper }}"
+          ipsecIntegrity: "{{ p2_hash | replace('-', '') | upper }}"
+          pfsGroup: "{{ {'group14': 'PFS14', 'group19': 'ECP256', 'group20': 'ECP384'}[pfs] }}"
+          saLifeTimeSeconds: "{{ sa_life }}"
+          saDataSizeKilobytes: "{{ sa_size }}"
+      block:
+        - name: CLD >> Getting current IPsec policy
+          ansible.builtin.command: az network vpn-connection ipsec-policy list -g {{ az_rg_name }} --connection-name {{ az_vpn_connection }} -o json
+          register: az_ipsec_cur
+          changed_when: false
+          check_mode: false
+        # A connection holds one policy and it cant be edited, so a different one is cleared then added
+        - name: CLD >> Clearing IPsec policy (differs from the vars)
+          ansible.builtin.command: az network vpn-connection ipsec-policy clear -g {{ az_rg_name }} --connection-name {{ az_vpn_connection }}
+          when: (az_ipsec_cur.stdout | from_json | length > 0) and (az_ipsec_cur.stdout | from_json != [az_ipsec_policy])
+          changed_when: true
+        - name: CLD >> Adding IPsec policy
+          ansible.builtin.command: >
+            az network vpn-connection ipsec-policy add -g {{ az_rg_name }} --connection-name {{ az_vpn_connection }}
+            --dh-group {{ az_ipsec_policy.dhGroup }} --ike-encryption {{ az_ipsec_policy.ikeEncryption }}
+            --ike-integrity {{ az_ipsec_policy.ikeIntegrity }} --ipsec-encryption {{ az_ipsec_policy.ipsecEncryption }}
+            --ipsec-integrity {{ az_ipsec_policy.ipsecIntegrity }} --pfs-group {{ az_ipsec_policy.pfsGroup }}
+            --sa-lifetime {{ sa_life }} --sa-max-size {{ sa_size }}
+          when: az_ipsec_cur.stdout | from_json != [az_ipsec_policy]
+          changed_when: true
+        - name: CLD >> Getting current PSK
+          ansible.builtin.command: az network vpn-connection shared-key show -g {{ az_rg_name }} --connection-name {{ az_vpn_connection }} --query value -o tsv
+          register: az_psk_cur
+          changed_when: false
+          check_mode: false
+          no_log: true
+        - name: CLD >> Updating PSK (differs from psk)
+          ansible.builtin.command: >
+            az network vpn-connection shared-key update -g {{ az_rg_name }} --connection-name {{ az_vpn_connection }}
+            --value {{ psk | quote }} -o none
+          when: az_psk_cur.stdout != psk
+          changed_when: true
+          no_log: true
 
 ###### Delete the Azure elements of the VPN, in dependency order ######
+## Tagged never so they only run when asked for by tag (a run with no tags only deploys)
 ## vpn_down deletes the chargeable elements to break the VPN (VPN connection, VPN gateway and public IP).
 - name: BLK >> Destroy, vpn_down - vpn conn, gw, pip
-  tags: [destroy, vpn_down]
+  tags: [destroy, vpn_down, never]
   block:
+    # The module deletes the connection but then fails returning its IPsec policy (raw SDK object, ansible-core 2.19+), so uses the AZ CLI
+    - name: CLD >> Checking if VPN connection exists
+      ansible.builtin.command: az network vpn-connection list -g {{ az_rg_name }} --query "[?name=='{{ az_vpn_connection }}'].name" -o tsv
+      register: az_conn_cur
+      changed_when: false
+      check_mode: false
     - name: CLD >> Delete VPN connection
-      azure.azcollection.azure_rm_virtualnetworkgatewayconnection:
-        resource_group: "{{ az_rg_name }}"
-        name: "{{ az_vpn_connection }}"
-        state: absent
+      ansible.builtin.command: az network vpn-connection delete -g {{ az_rg_name }} -n {{ az_vpn_connection }}
+      when: az_conn_cur.stdout != ""
+      changed_when: true
     - name: CLD >> Delete virtual network gateway - Be patient it takes a while
       azure.azcollection.azure_rm_virtualnetworkgateway:
         resource_group: "{{ az_rg_name }}"
@@ -120,7 +177,7 @@
         state: absent
 ## destroy deletes also deletes the local network gateway (remote site).
 - name: BLK >> Destroy - local-network gw
-  tags: destroy
+  tags: [destroy, never]
   block:
     - name: CLD >> Delete local network gateway
       azure.azcollection.azure_rm_localnetworkgateway:

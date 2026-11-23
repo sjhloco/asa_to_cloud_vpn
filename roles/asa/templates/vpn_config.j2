@@ -5,19 +5,13 @@ object-group network {{ asa_vpn.local_grp }}
  network-object {{ x | ansible.utils.ipaddr('network') }} {{ x | ansible.utils.ipaddr('netmask') }}
 {% endfor %}
 !
-object-group network {{ asa_vpn.az_vnet_grp }}
- description Remote Virtual network address spaces (supernets)
-{% for y in az_vn_addr_spc %}
- network-object {{ y | ansible.utils.ipaddr('network') }} {{ y | ansible.utils.ipaddr('netmask') }}
-{% endfor %}
-!
 object-group network {{ asa_vpn.az_subnet_grp }}
  description Remote Virtual subnets accessible over VPN
 {% for y in az_subnets.values() %}
  network-object {{ y | ansible.utils.ipaddr('network') }} {{ y | ansible.utils.ipaddr('netmask') }}
 {% endfor %}
 !
-access-list {{ asa_outside_acl }} extended permit ip object-group {{ asa_vpn.az_subnet_grp }} object-group {{ asa_vpn.local_grp }}
+access-list {{ asa_tunnel_acl }} extended permit ip object-group {{ asa_vpn.az_subnet_grp }} object-group {{ asa_vpn.local_grp }}
 sysopt connection tcpmss 1350
 
 
@@ -48,6 +42,9 @@ interface Tunnel1
  tunnel destination {{ hostvars.localhost.cld_public_ip }}
  tunnel mode ipsec ipv4
  tunnel protection ipsec profile {{ cld_provider }}_ESP_{{ p2_encr |upper | replace("-", "") }}
+!
+{# Decrypted traffic arrives on the tunnel nameif, so the ACL is bound there (only matters with no sysopt connection permit-vpn) #}
+access-group {{ asa_tunnel_acl }} in interface {{ asa_tunnel_intf }}
 !
 {% for rte in az_vn_addr_spc %}
 route {{ asa_tunnel_intf }} {{ rte | ansible.utils.ipaddr('network') }} {{ rte | ansible.utils.ipaddr('netmask') }} {{ asa_tunnel_ip | ansible.utils.ipaddr('2') | ansible.utils.ipaddr('address') }} 1
