@@ -36,7 +36,7 @@ When run in full from behind the ASA, the playbook looks up the ASA and Azure pu
 5. On the ASA, enable SSH with an ECDSA host key. paramiko 5.x no longer accepts the ASA's default *ssh-rsa*\
    `ssh key-exchange hostkey ecdsa`
 
-The ASA credentials are in *group_vars/all.yml*, Azure uses your local *az login* session (CI or unattended runs need service principal environment variables).
+The ASA password and PSK are vaulted in *group_vars/all.yml*, so run with `--ask-vault-pass` or set `ANSIBLE_VAULT_PASSWORD_FILE`. Azure uses your local *az login* session (CI or unattended runs need service principal environment variables).
 
 ### Variables
 
@@ -45,7 +45,7 @@ All the variables are in *group_vars/all.yml*, split into ASA, Azure and both.
 #### ASA variables
 
 - *ansible_user:* ASA username
-- *ansible_password:* ASA password
+- *ansible_password:* ASA password (vaulted)
 - *asa_vpn_index:* Priority of the IKEv2 policy
 - *asa_vpn_interface:* Outside interface (nameif). IKEv2 is enabled on it and it is the tunnel source
 - *asa_tunnel_intf:* Nameif of *Tunnel1*. The static routes to Azure point out of it
@@ -72,7 +72,7 @@ All the variables are in *group_vars/all.yml*, split into ASA, Azure and both.
 - *rmte_subnets:* Networks behind the ASA. Used in the ASA object-group and the Azure local network gateway
 - *az_vn_addr_spc:* Address spaces (supernets) of the Azure virtual network. The ASA has a static route for each one over *Tunnel1*
 - *az_subnets:* Subnets in the virtual network (*name: prefix*). The tunnel ACL allows these in
-- *psk:* Pre-shared key, set on both ends
+- *psk:* Pre-shared key, set on both ends (vaulted)
 - *rmte_public_ip:* ASA public IP. Commented out so it is dynamically looked up (see [Setting the public IPs yourself](#setting-the-public-ips-yourself))
 - *cld_public_ip:* Azure public IP. Commented out so it is dynamically looked up (see [Setting the public IPs yourself](#setting-the-public-ips-yourself))
 
