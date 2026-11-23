@@ -1,54 +1,44 @@
 ---
-ansible_python_interpreter: "/usr/bin/env python"          # Ubuntu
-
-
 ################################## ASA only Variables ##################################
 # device credentials
-ansible_user: ste
-ansible_ssh_pass: !vault |
-          $ANSIBLE_VAULT;1.1;AES256
-          33643534626634643263303934626161393832376262356262373335383635333934316333613166
-          6263643766643030353764356261643866333138363962300a343364376261366630623838643561
-          38396563616437653136323430613761616536646131663364646631353539636539656331326264
-          6362656262643964610a653830346165633264366465306562663733633539666465343337663662
-          6663
+ansible_user: admin
+ansible_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  62646439356637356530643238313431316134303333303764396133613438613764613566346439
+  6239396338313439656332353063313162633630303634300a356338313964643833336337373465
+  61343062306262393138336163353533363365323434356235393038633865623735316266636363
+  3033346362656166330a346439363933656562396632656461656638656137366562323566383435
+  3336
 
 # ASA specific VPN configuration details
-vpn_index: 100
-crypto_map: CRYPTO_MAP
-vpn_interface: HME_INET_VL99
-outside_acl: OUTSIDE
+asa_vpn_index: 100
+asa_vpn_interface: HME_INET_VL99
+asa_tunnel_acl: "{{ cld_provider }}_TUN_IN"
+asa_tunnel_intf: "HME_{{ cld_provider }}_TUN"
+asa_tunnel_ip: 10.10.253.1/30
+
 # Naming for the VPN ACL and objects groups
 asa_vpn:
-  acl: "{{ cld_provider }}_VPN"
   local_grp: "{{ cld_provider }}_LOCAL"
-  az_vnet_grp: "{{ cld_provider }}_REMOTE_VNET"
   az_subnet_grp: "{{ cld_provider }}_REMOTE_SUBNET"
-
 
 ################################## Azure only Variables ##################################
 # Azure base Parameters
-cld_region: westeurope
-rg_name: stesworld
+az_region: swedencentral
+az_rg_name: stesworld
 
 # Azure VPN gateway subnet and object naming
-public_ip_name: NT_VPN_{{ rmte_location }}_{{ cld_provider }}IP
-vn_name: NT-vnet1
-gw_subnet_name: GatewaySubnet
-gw_subnet_prfx: 10.20.255.0/28
+az_public_ip_name: pip-vpn-{{ rmte_location.lower() }}-{{ cld_provider.lower() }}1 # pip-vpn-hme-az1
+az_vn_name: vnet-blu-{{ cld_provider.lower() }}1 # vnet-blu-az1
+az_gw_subnet_prfx: 10.40.255.0/27
 
 # Azure object naming for elements that glue VPN connection together (local and remote details joined in a connection profile)
-cld_gateway: NT_VPN_{{ rmte_location }}_{{ cld_provider }}GW
-rmte_gateway: NT_VPN_{{ rmte_location }}_REMOTE
-vpn_connection: NT_VPN_{{ rmte_location }}_CONN
+az_gateway: vpn-gw-{{ rmte_location.lower() }}-{{ cld_provider.lower() }}1 # vpn-gw-hme-az1
+az_rmte_gateway: vpn-rmte-{{ rmte_location.lower() }}-{{ cld_provider.lower() }}1 # vpn-rmte-hme-az1
+az_vpn_connection: vpn-conn-{{ rmte_location.lower() }}-{{ cld_provider.lower() }}1 # vpn-conn-hme-az1
 
 ################################## VPN Variables for both ASA and Azure ##################################
-
-# Define whether it is policy_based (IKEV1) or or route_based (IKEV2) IpSec VPN
-tunnel_type: policy_based
-# tunnel_type: route_based
-
-#Names of the VPN sites, so the cloud provider (i.e Azure) and the remote location (i.e home))
+# Names of the VPN sites, so the cloud provider (i.e Azure) and the remote location (i.e home))
 cld_provider: AZ
 rmte_location: HME
 
@@ -58,48 +48,30 @@ rmte_subnets:
   - 10.10.10.0/24
   - 10.10.20.0/24
 
-# Cloud-side VPN variables - Peer IP Azure object name, interesting traffic and subnets (for filtering in outside ACL)
-# cld_public_ip: 20.71.250.7        # Unhash if Azure is deleted yet ASA is not, allows you to run ASA parts
-vn_addr_spc:
-  - 10.20.0.0/16
-cld_subnets:
-  NT-vnet1-mgmt: 10.20.10.0/24
-  NT-vnet1-data: 10.20.20.0/24
+# Cloud-side VPN variables - Peer IP Azure object name, interesting traffic and subnets (for filtering in the tunnel ACL)
+# cld_public_ip: 20.71.250.7 # Unhash if Azure is deleted yet ASA is not, allows you to run ASA parts
+az_vn_addr_spc:
+  - 10.40.0.0/16
+az_subnets:
+  snet-blu-mgmt: 10.40.10.0/24
+  snet-blu-data: 10.40.20.0/24
 
-# VPN PSK, encryption (AES) and hashing (SHA) algorithms - Same names used for IKEv1 or IKEV2 in the playbooks
-# policy-based SKU basic is limited to pre-config defaults https://docs.microsoft.com/en-gb/azure/vpn-gateway/vpn-gateway-about-vpn-devices
+# Route-based SKU VpnGw1AZ can use IPsec policy, example of IKEV2 (route-based) parameters
+p1_encr: aes-256 # aes-192, aes-256
+p1_hash: sha384 # sha256, sha384
+dh: 20 # 14, 19, 20
+p1_life: 28800 # Is fixed to this in Azure
 
-## EXAMPLE of IKEV1 (policy-based) parameters - no need to define the PFS
-p1_encr: aes-256            # 3des, aes-256
-p1_hash: sha1               # sha1
-dh: 2                       # 2
-p1_life: 28800              # Azure default
-
-p2_encr: aes-256            # 3des, aes-256
-p2_hash: sha1               # sha1
-sa_life: 3600               # Azure default
-sa_size: 102400000          # Azure default
-
-# Route-based SKU VpnGw1 can use IPsec policy to change IKEV2 settings - https://docs.microsoft.com/en-gb/azure/vpn-gateway/vpn-gateway-about-compliance-crypto?WT.mc_id=Portal-fx
-## EXAMPLE of IKEV2 (route-based) parameters
-# p1_encr: aes-256            # des, 3des, aes-192, aes-256
-# p1_hash: sha384             # md5, sha1, sha256, sha384
-# dh: 24                      # 2, 14, 24
-# p1_life: 28800              # Is fixed to this in Azure
-
-# p2_encr: aes-256            # des, 3des, aes-192, aes-256
-# p2_hash: sha-1              # md5, sha-1, sha-256
-# pfs: group24                # group2, group24
-# sa_life: 27000              # Azure defaults
-# sa_size: 102400000          # Azure defaults
+p2_encr: aes-256 # aes-192, aes-256 (aes-gcm not supported, see README)
+p2_hash: sha-256 # sha-256 (Azure has no SHA384 for phase 2)
+pfs: group20 # group14, group19, group20
+sa_life: 27000 # Azure defaults
+sa_size: 102400000 # Azure defaults
 
 psk: !vault |
-          $ANSIBLE_VAULT;1.1;AES256
-          37353039666337373863636331626435353965343539643735333361316266656539323433653866
-          3263386464326137366534633334656561643861613532330a613338323731393535313962613861
-          37613930613337343237653063303062353530323234646634343438376165623835646366323361
-          3836653430386462630a333265353539663733626261613462353363323137366464333535363465
-          63623961376364333436313037633033663531306230323563633038613833633435
-
-# Required to stop playbook failing if it doesn't exist. Will be overridden by psk if actually exists
-psk1: dummy
+  $ANSIBLE_VAULT;1.1;AES256
+  32623338303035333336393533363763363039303239393266326638643934656261323761613461
+  6466653838313232336635373232643232663862313336330a613934333330653365336631653333
+  32663962313139366531613830656464313536616165303365363434613736393131623830363166
+  3333343235326239640a653163316330383337313638353832353330326363636564623762623139
+  63643938303964366661366534393332356134363334616635303363656539316231

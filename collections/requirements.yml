@@ -1,0 +1,17 @@
+---
+# Collections this project uses. Installs into ./collections (see ansible.cfg):
+#   uv run ansible-galaxy collection install -r collections/requirements.yml
+#
+# Range pins take minor and patch fixes but block the next major (breaking changes).
+# AAP reads this path on project sync, and an EE build can point at it.
+collections:
+  - name: ansible.netcommon
+    version: ">=8.7.0,<9.0.0"
+  - name: ansible.utils
+    version: ">=6.1.1,<7.0.0"
+  - name: community.general
+    version: ">=13.4.0,<14.0.0"
+  - name: cisco.asa
+    version: ">=7.0.0,<8.0.0"
+  - name: azure.azcollection
+    version: "==4.2.0" # Exact pin, its SDK packages are pinned in pyproject.toml. See README upgrade section
